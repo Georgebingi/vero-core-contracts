@@ -28,6 +28,7 @@ pub enum DataKey {
     Admin,
     DripsAddress,
     RewardStream(u64), // keyed by task_id
+    Lock,              // re-entrancy mutex
 }
 
 #[contracterror]
@@ -38,4 +39,5 @@ pub enum ContractError {
     TaskNotVerified = 3,
     StreamAlreadyActive = 4,
     DripsCallFailed = 5,
+    Locked = 6,
 }

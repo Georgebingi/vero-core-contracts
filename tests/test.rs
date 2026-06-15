@@ -156,6 +156,58 @@ fn test_reward_stream_stored_after_success() {
     assert!(stream.active);
 }
 
+// ─── Re-entrancy protection tests ─────────────────────────────────────
+
+#[test]
+fn test_lock_released_after_successful_vote() {
+    // After a normal vote the lock must be cleared so subsequent votes work.
+    // If the lock leaked, the second vote would fail with Locked.
+    let (env, admin, client) = setup();
+    let g1 = Address::generate(&env);
+    let g2 = Address::generate(&env);
+
+    client.add_guardian(&admin, &g1);
+    client.add_guardian(&admin, &g2);
+    client.register_task(&admin, &202u64);
+
+    client.vote(&g1, &202u64);
+    client.vote(&g2, &202u64); // would fail if lock was not released
+
+    let task = client.get_task(&202u64).unwrap();
+    assert_eq!(task.votes, 2);
+}
+
+#[test]
+fn test_lock_released_after_successful_register_task() {
+    // Registering two tasks sequentially verifies the lock is released each time.
+    let (_env, admin, client) = setup();
+
+    client.register_task(&admin, &300u64);
+    client.register_task(&admin, &301u64); // would fail if lock leaked
+
+    assert!(client.get_task(&300u64).is_some());
+    assert!(client.get_task(&301u64).is_some());
+}
+
+#[test]
+fn test_lock_released_after_failed_vote() {
+    // When vote() fails early (non-guardian), the lock must still be released
+    // so a subsequent legitimate call can succeed.
+    let (env, admin, client) = setup();
+    let g = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    client.add_guardian(&admin, &g);
+    client.register_task(&admin, &303u64);
+
+    // Non-guardian vote is rejected (lock must be released inside)
+    let _ = client.try_vote(&stranger, &303u64);
+
+    // Legitimate vote must still succeed
+    client.vote(&g, &303u64);
+    assert_eq!(client.get_task(&303u64).unwrap().votes, 1);
+}
+
 // ─── Mock Drips contract for test isolation ────────────────────────────
 
 use soroban_sdk::{contract, contractimpl};

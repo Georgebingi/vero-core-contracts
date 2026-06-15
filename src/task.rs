@@ -1,12 +1,16 @@
 use soroban_sdk::{Address, Env};
 
+use crate::reentrancy;
 use crate::types::{ContractError, DataKey, Task};
 
 pub fn register_task(env: &Env, admin: Address, task_id: u64) -> Result<(), ContractError> {
     admin.require_auth();
 
+    reentrancy::lock(env)?;
+
     let key = DataKey::Task(task_id);
     if env.storage().instance().has(&key) {
+        reentrancy::unlock(env);
         return Err(ContractError::NotAuthorized);
     }
 
@@ -16,6 +20,8 @@ pub fn register_task(env: &Env, admin: Address, task_id: u64) -> Result<(), Cont
         is_done: false,
     };
     env.storage().instance().set(&key, &task);
+
+    reentrancy::unlock(env);
     Ok(())
 }
 

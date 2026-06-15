@@ -2,6 +2,7 @@
 
 mod drips;
 mod guardian;
+mod reentrancy;
 mod task;
 mod types;
 pub mod events;
@@ -35,28 +36,36 @@ impl VeroContract {
     pub fn vote(env: Env, guardian: Address, task_id: u64) -> Result<(), ContractError> {
         guardian.require_auth();
 
+        reentrancy::lock(&env)?;
+
         if !guardian::is_guardian(&env, &guardian) {
+            reentrancy::unlock(&env);
             return Err(ContractError::NotAuthorized);
         }
 
         let voted_key = DataKey::Voted(task_id, guardian.clone());
         if env.storage().instance().has(&voted_key) {
+            reentrancy::unlock(&env);
             return Err(ContractError::DuplicateVote);
         }
         env.storage().instance().set(&voted_key, &true);
 
         let task_key = DataKey::Task(task_id);
-        let mut t: types::Task = env
-            .storage()
-            .instance()
-            .get(&task_key)
-            .ok_or(ContractError::NotAuthorized)?;
+        let mut t: types::Task = match env.storage().instance().get(&task_key) {
+            Some(t) => t,
+            None => {
+                reentrancy::unlock(&env);
+                return Err(ContractError::NotAuthorized);
+            }
+        };
 
         t.votes += 1;
         if t.votes >= VOTE_THRESHOLD {
             t.is_done = true;
         }
         env.storage().instance().set(&task_key, &t);
+
+        reentrancy::unlock(&env);
         Ok(())
     }
 
