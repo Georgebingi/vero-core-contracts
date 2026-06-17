@@ -69,36 +69,21 @@ pub enum DataKey {
 }
 
 /// Every public write operation exposed by VeroContract.
-/// Used as the argument to `get_estimated_cost` so callers can query
-/// the estimated instruction-unit cost before submitting a transaction.
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
-    /// `register_task` — 2 storage writes (reentrancy lock + task entry).
     RegisterTask = 0,
-    /// `vote` — most complex path: 5+ reads, 2 writes, conditional cross-contract call.
     Vote = 1,
-    /// `add_guardian` — 1 write + admin auth check.
     AddGuardian = 2,
-    /// `set_reputation` — 1 write + admin auth check.
     SetReputation = 3,
-    /// `lock_tokens` — token cross-contract transfer + 2 storage writes.
     LockTokens = 4,
-    /// `unlock_tokens` — same structure as `lock_tokens`.
     UnlockTokens = 5,
-    /// `resign_guardian` — 2 writes + conditional token transfer.
     ResignGuardian = 6,
-    /// `set_weight_threshold` — 1 write + admin auth.
     SetWeightThreshold = 7,
-    /// `start_reward_stream` — 2 reads + cross-contract call + 1 write.
     StartRewardStream = 8,
-    /// `toggle_pause` / `pause` / `unpause` — 1 read + 1 write + event emission.
     TogglePause = 9,
-    /// `record_failure` — 1 read + 1 write + conditional second write.
     RecordFailure = 10,
-    /// `reset_circuit_breaker` — 2 writes + admin auth.
     ResetCircuitBreaker = 11,
-    /// `upgrade_contract` — WASM upgrade; highest fixed platform cost.
     UpgradeContract = 12,
     /// `record_snapshot` — records a state snapshot.
     RecordSnapshot = 13,

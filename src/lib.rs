@@ -32,6 +32,7 @@ impl VeroContract {
             return Err(ContractError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Initialized, &true);
+        env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::TokenAddress, &token);
         env.storage().instance().set(&DataKey::LockThreshold, &lock_threshold);
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -63,10 +64,7 @@ impl VeroContract {
     }
 
     pub fn is_paused(env: Env) -> bool {
-        env.storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false)
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 
     pub fn add_guardian(env: Env, admin: Address, guardian: Address) -> Result<(), ContractError> {
@@ -163,9 +161,7 @@ impl VeroContract {
 
     pub fn set_weight_threshold(env: Env, admin: Address, threshold: u64) -> Result<(), ContractError> {
         admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::WeightThreshold, &threshold);
+        env.storage().instance().set(&DataKey::WeightThreshold, &threshold);
         Ok(())
     }
 
@@ -181,14 +177,84 @@ impl VeroContract {
         env.storage().instance().set(&DataKey::VaultAddress, &vault);
     }
 
+    // ─── Token locking ─────────────────────────────────────────────────
+
+    pub fn lock_tokens(env: Env, guardian: Address, amount: i128) -> Result<(), ContractError> {
+        guardian.require_auth();
+        let token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenAddress)
+            .ok_or(ContractError::NotInitialized)?;
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        token_client.transfer(&guardian, &env.current_contract_address(), &amount);
+        let key = DataKey::LockedBalance(guardian.clone());
+        let prev: i128 = env.storage().instance().get(&key).unwrap_or(0);
+        env.storage().instance().set(&key, &(prev + amount));
+        Ok(())
+    }
+
+    pub fn unlock_tokens(env: Env, guardian: Address) -> Result<(), ContractError> {
+        guardian.require_auth();
+        if guardian::is_guardian(&env, &guardian) {
+            return Err(ContractError::StillGuardian);
+        }
+        let key = DataKey::LockedBalance(guardian.clone());
+        let amount: i128 = env.storage().instance().get(&key).unwrap_or(0);
+        if amount > 0 {
+            let token: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::TokenAddress)
+                .ok_or(ContractError::NotInitialized)?;
+            let token_client = soroban_sdk::token::Client::new(&env, &token);
+            token_client.transfer(&env.current_contract_address(), &guardian, &amount);
+            env.storage().instance().set(&key, &0i128);
+        }
+        Ok(())
+    }
+
+    pub fn resign_guardian(env: Env, guardian: Address) -> Result<(), ContractError> {
+        guardian.require_auth();
+        if !guardian::is_guardian(&env, &guardian) {
+            return Err(ContractError::NotGuardian);
+        }
+        let g_key = DataKey::Guardian(guardian.clone());
+        env.storage().instance().remove(&g_key);
+        let key = DataKey::LockedBalance(guardian.clone());
+        let amount: i128 = env.storage().instance().get(&key).unwrap_or(0);
+        if amount > 0 {
+            let token: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::TokenAddress)
+                .ok_or(ContractError::NotInitialized)?;
+            let token_client = soroban_sdk::token::Client::new(&env, &token);
+            token_client.transfer(&env.current_contract_address(), &guardian, &amount);
+            env.storage().instance().set(&key, &0i128);
+        }
+        Ok(())
+    }
+
     // ─── Task lifecycle ────────────────────────────────────────────
 
-     pub fn register_task(
+    /// Register a task. Requires the caller to be the stored admin.
+    /// Any address that was not set as admin during `initialize` will be
+    /// rejected with `NotAuthorized` before auth is even checked.
+    pub fn register_task(
         env: Env,
         admin: Address,
         task_id: u64,
     ) -> Result<(), ContractError> {
         circuit_breaker::require_not_paused(&env)?;
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ContractError::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(ContractError::NotAuthorized);
+        }
         let task_ids = soroban_sdk::vec![&env, task_id];
         task::register_tasks(&env, admin, task_ids)
     }
@@ -349,19 +415,6 @@ impl VeroContract {
 
     // ─── Gas cost estimation ───────────────────────────────────────────
 
-    /// Returns the estimated instruction-unit cost for a given [`Operation`].
-    ///
-    /// This is a pure view function — it performs no storage reads or writes,
-    /// no authentication, and no cross-contract calls. Guardians and tooling
-    /// can call this before submitting a transaction to set an appropriate
-    /// resource fee and avoid "out of gas" failures.
-    ///
-    /// # Arguments
-    /// * `op` — The [`Operation`] variant whose cost estimate is requested.
-    ///
-    /// # Returns
-    /// A `u64` representing the conservative upper-bound instruction-unit cost,
-    /// calibrated against Soroban Protocol 21 metering constants.
     pub fn get_estimated_cost(_env: Env, op: types::Operation) -> u64 {
         gas::get_estimated_cost(op)
     }
